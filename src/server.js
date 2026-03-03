@@ -3,12 +3,14 @@ const fs = require('fs').promises;
 const path = require('path');
 const { spawn } = require('child_process');
 const os = require('os');
+const multer = require('multer');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const DATA_ROOT = process.env.DATA_ROOT || '/data/render';
+const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 
 // Garantir que path está dentro de DATA_ROOT (evitar path traversal)
 function resolveSafe(basePath, subPath) {
@@ -66,7 +68,7 @@ app.post('/jpeg-to-mp4', async (req, res) => {
 
     await fs.mkdir(path.dirname(outPath), { recursive: true });
 
-    const ffmpeg = spawn('ffmpeg', [
+    const ffmpeg = spawn(FFMPEG, [
       '-y',
       '-f', 'concat',
       '-safe', '0',
@@ -89,6 +91,85 @@ app.post('/jpeg-to-mp4', async (req, res) => {
 
     res.json({ success: true, outputPath: outPath });
   } catch (err) {
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
+// Upload em memória para multipart (limite 50MB por arquivo, 200 arquivos)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024, files: 200 }
+});
+
+// POST /jpeg-to-mp4-upload — envia os JPEGs no body (multipart); gera MP4 e devolve o arquivo ou salva em outputPath
+// Uso: n8n lê os arquivos do próprio volume e envia neste endpoint; não precisa compartilhar volume
+app.post('/jpeg-to-mp4-upload', upload.array('frames', 200), async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: 'Envie os arquivos JPEG no campo "frames" (multipart/form-data)' });
+  }
+
+  const outputPath = req.body.outputPath; // opcional, relativo a DATA_ROOT
+  const tmpDir = path.join(os.tmpdir(), `jpeg-upload-${Date.now()}`);
+  const outMp4 = path.join(tmpDir, 'out.mp4');
+
+  try {
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    const sorted = [...req.files].sort((a, b) =>
+      String(a.originalname).localeCompare(b.originalname, undefined, { numeric: true })
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      const ext = path.extname(sorted[i].originalname) || '.jpg';
+      await fs.writeFile(path.join(tmpDir, `frame_${String(i + 1).padStart(5, '0')}${ext}`), sorted[i].buffer);
+    }
+
+    const listPath = path.join(tmpDir, 'list.txt');
+    const duration = 1 / 30;
+    const lines = [];
+    const written = await fs.readdir(tmpDir).then((names) => names.filter((n) => /\.(jpe?g|JPE?G)$/i.test(n)).sort());
+    for (let i = 0; i < written.length; i++) {
+      const f = path.join(tmpDir, written[i]);
+      lines.push(`file '${f.replace(/'/g, "'\\''")}'`);
+      lines.push(`duration ${duration}`);
+    }
+    if (written.length > 0) {
+      lines.push(`file '${path.join(tmpDir, written[written.length - 1]).replace(/'/g, "'\\''")}'`);
+    }
+    await fs.writeFile(listPath, lines.join('\n'));
+
+    const ffmpeg = spawn(FFMPEG, [
+      '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30', outMp4
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+    const code = await new Promise((resolve) => ffmpeg.on('close', resolve));
+
+    for (const f of written) await fs.unlink(path.join(tmpDir, f)).catch(() => {});
+    await fs.unlink(listPath).catch(() => {});
+
+    if (code !== 0) {
+      await fs.rm(tmpDir, { recursive: true }).catch(() => {});
+      return res.status(500).json({ error: 'Erro no FFmpeg', detail: stderr.slice(-500) });
+    }
+
+    if (outputPath) {
+      const destPath = resolveSafe(DATA_ROOT, outputPath);
+      await fs.mkdir(path.dirname(destPath), { recursive: true });
+      await fs.rename(outMp4, destPath);
+      await fs.rm(tmpDir, { recursive: true }).catch(() => {});
+      return res.json({ success: true, outputPath: destPath });
+    }
+
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
+    const stream = require('fs').createReadStream(outMp4);
+    stream.pipe(res);
+    stream.on('end', () => fs.rm(tmpDir, { recursive: true }).catch(() => {}));
+    stream.on('error', () => fs.rm(tmpDir, { recursive: true }).catch(() => {}));
+  } catch (err) {
+    await fs.rm(tmpDir, { recursive: true }).catch(() => {});
     res.status(500).json({ error: err.message || 'Erro ao processar' });
   }
 });
@@ -131,7 +212,7 @@ app.post('/merge-mp4', async (req, res) => {
 
     await fs.mkdir(path.dirname(outPath), { recursive: true });
 
-    const ffmpeg = spawn('ffmpeg', [
+    const ffmpeg = spawn(FFMPEG, [
       '-y',
       '-f', 'concat',
       '-safe', '0',
@@ -174,7 +255,7 @@ app.post('/video-with-audio', async (req, res) => {
     await fs.access(audio);
     await fs.mkdir(path.dirname(outPath), { recursive: true });
 
-    const ffmpeg = spawn('ffmpeg', [
+    const ffmpeg = spawn(FFMPEG, [
       '-y',
       '-i', video,
       '-i', audio,
@@ -209,6 +290,7 @@ app.get('/info', (req, res) => {
     version: '1.0',
     endpoints: {
       'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
+      'POST /jpeg-to-mp4-upload': 'Envia JPEGs em multipart → devolve MP4 (n8n em outro volume)',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /health': 'Health check',

@@ -15,10 +15,10 @@ services:
       - n8n-srcleads_ffmpeg_render:/data/render
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 60s
 
 volumes:
   n8n-srcleads_ffmpeg_render:

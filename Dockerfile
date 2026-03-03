@@ -1,7 +1,9 @@
 FROM node:20-alpine
 
 # Instalar FFmpeg e curl (healthcheck)
-RUN apk add --no-cache ffmpeg curl
+RUN apk add --no-cache ffmpeg curl \
+  && which ffmpeg \
+  && ffmpeg -version | head -1
 
 WORKDIR /app
 
