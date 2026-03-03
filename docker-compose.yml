@@ -3,6 +3,8 @@ services:
     build: .
     image: ffmpeg-api:latest
     restart: unless-stopped
+    expose:
+      - "3000"
     environment:
       - PORT=3000
       - DATA_ROOT=/data/render

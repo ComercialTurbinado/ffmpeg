@@ -201,6 +201,19 @@ app.post('/video-with-audio', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+app.get('/', (req, res) => {
+  res.json({
+    name: 'FFmpeg API',
+    version: '1.0',
+    endpoints: {
+      'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
+      'POST /merge-mp4': 'Vários MP4s → um único vídeo',
+      'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
+      'GET /health': 'Health check'
+    }
+  });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`FFmpeg API rodando na porta ${PORT}`);
 });
