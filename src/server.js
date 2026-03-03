@@ -280,6 +280,59 @@ app.post('/video-with-audio', async (req, res) => {
   }
 });
 
+// POST /save-base64 — recebe imagens em base64 (ou data URL) e salva na pasta informada
+const MAX_BASE64_IMAGES = 200;
+const MAX_FILE_SIZE_BASE64 = 50 * 1024 * 1024; // 50MB por imagem
+
+function parseDataUrl(str) {
+  if (typeof str !== 'string') return null;
+  const m = str.match(/^data:([^;]+);base64,(.+)$/);
+  if (m) {
+    const ext = m[1] === 'image/jpeg' || m[1] === 'image/jpg' ? '.jpg' : m[1] === 'image/png' ? '.png' : m[1] === 'image/gif' ? '.gif' : m[1] === 'image/webp' ? '.webp' : '.jpg';
+    return { base64: m[2], ext };
+  }
+  return { base64: str, ext: '.jpg' };
+}
+
+app.post('/save-base64', async (req, res) => {
+  const { folderPath, images } = req.body;
+  if (!images || !Array.isArray(images) || images.length === 0) {
+    return res.status(400).json({ error: 'images (array de base64 ou data URL) é obrigatório e não pode ser vazio' });
+  }
+  if (!folderPath || typeof folderPath !== 'string') {
+    return res.status(400).json({ error: 'folderPath é obrigatório' });
+  }
+  if (images.length > MAX_BASE64_IMAGES) {
+    return res.status(400).json({ error: `Máximo ${MAX_BASE64_IMAGES} imagens por requisição` });
+  }
+
+  const dir = resolveSafe(DATA_ROOT, folderPath);
+  const saved = [];
+
+  try {
+    await fs.mkdir(dir, { recursive: true });
+
+    for (let i = 0; i < images.length; i++) {
+      const parsed = parseDataUrl(images[i]);
+      if (!parsed) {
+        return res.status(400).json({ error: `Item ${i + 1}: base64 ou data URL inválido` });
+      }
+      const buffer = Buffer.from(parsed.base64, 'base64');
+      if (buffer.length > MAX_FILE_SIZE_BASE64) {
+        return res.status(400).json({ error: `Imagem ${i + 1} muito grande (>${MAX_FILE_SIZE_BASE64 / 1024 / 1024}MB)` });
+      }
+      const filename = `frame_${String(i + 1).padStart(5, '0')}${parsed.ext}`;
+      const filepath = path.join(dir, filename);
+      await fs.writeFile(filepath, buffer);
+      saved.push(filename);
+    }
+
+    res.json({ success: true, folderPath: dir, folderPathRelative: folderPath, saved: saved.length, files: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
 // POST /download-urls — recebe lista de URLs, baixa os arquivos e salva na pasta informada (relativa a /data/render)
 const MAX_DOWNLOAD_URLS = 200;
 const DOWNLOAD_TIMEOUT_MS = 60000; // 1 min por arquivo
@@ -327,24 +380,34 @@ app.post('/download-urls', async (req, res) => {
       const filename = `frame_${String(i + 1).padStart(5, '0')}${ext}`;
       const filepath = path.join(dir, filename);
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
-      const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
-      clearTimeout(timeout);
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+        const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+        clearTimeout(timeout);
 
-      if (!response.ok) {
-        return res.status(502).json({ error: `Falha ao baixar ${url}: HTTP ${response.status}` });
+        if (!response.ok) {
+          return res.status(502).json({ error: `Falha ao baixar ${url}: HTTP ${response.status}` });
+        }
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > MAX_FILE_SIZE) {
+          return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length > MAX_FILE_SIZE) {
+          return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
+        }
+        await fs.writeFile(filepath, buffer);
+        saved.push(filename);
+      } catch (fetchErr) {
+        const reason = fetchErr.cause?.message || fetchErr.message || 'unknown';
+        return res.status(502).json({
+          error: `Falha ao baixar URL (${i + 1}/${urls.length})`,
+          url,
+          detail: reason,
+          hint: 'Container pode não ter acesso à internet. Use POST /save-base64 com dados em base64 ou POST /jpeg-to-mp4-upload com multipart.'
+        });
       }
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && parseInt(contentLength, 10) > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
-      }
-      await fs.writeFile(filepath, buffer);
-      saved.push(filename);
     }
 
     res.json({ success: true, folderPath: dir, folderPathRelative: folderPath, saved: saved.length, files: saved });
@@ -368,6 +431,7 @@ app.get('/info', (req, res) => {
       'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
       'POST /jpeg-to-mp4-upload': 'Envia JPEGs em multipart → devolve MP4 (n8n em outro volume)',
       'POST /download-urls': 'Lista de URLs → baixa arquivos e salva em folderPath',
+      'POST /save-base64': 'Array de base64 ou data URL → salva imagens em folderPath',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /health': 'Health check',
