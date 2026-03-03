@@ -280,6 +280,82 @@ app.post('/video-with-audio', async (req, res) => {
   }
 });
 
+// POST /download-urls — recebe lista de URLs, baixa os arquivos e salva na pasta informada (relativa a /data/render)
+const MAX_DOWNLOAD_URLS = 200;
+const DOWNLOAD_TIMEOUT_MS = 60000; // 1 min por arquivo
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB por arquivo
+
+function isValidUrl(str) {
+  try {
+    const u = new URL(str);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function getExtFromUrl(url) {
+  const pathname = new URL(url).pathname;
+  const ext = path.extname(pathname).toLowerCase();
+  return /^\.(jpe?g|png|gif|webp|bmp)$/.test(ext) ? ext : '.jpg';
+}
+
+app.post('/download-urls', async (req, res) => {
+  const { urls, folderPath } = req.body;
+  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: 'urls (array) é obrigatório e não pode ser vazio' });
+  }
+  if (!folderPath || typeof folderPath !== 'string') {
+    return res.status(400).json({ error: 'folderPath é obrigatório' });
+  }
+  if (urls.length > MAX_DOWNLOAD_URLS) {
+    return res.status(400).json({ error: `Máximo ${MAX_DOWNLOAD_URLS} URLs por requisição` });
+  }
+
+  const dir = resolveSafe(DATA_ROOT, folderPath);
+  const saved = [];
+
+  try {
+    await fs.mkdir(dir, { recursive: true });
+
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      if (!isValidUrl(url)) {
+        return res.status(400).json({ error: `URL inválida (apenas http/https): ${url}` });
+      }
+      const ext = getExtFromUrl(url);
+      const filename = `frame_${String(i + 1).padStart(5, '0')}${ext}`;
+      const filepath = path.join(dir, filename);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+      const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        return res.status(502).json({ error: `Falha ao baixar ${url}: HTTP ${response.status}` });
+      }
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength, 10) > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `Arquivo muito grande (>${MAX_FILE_SIZE / 1024 / 1024}MB): ${url}` });
+      }
+      await fs.writeFile(filepath, buffer);
+      saved.push(filename);
+    }
+
+    res.json({ success: true, folderPath: dir, folderPathRelative: folderPath, saved: saved.length, files: saved });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Timeout ao baixar arquivo' });
+    }
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
 app.get('/health', (req, res) => res.status(200).send('ok'));
 
 app.get('/', (req, res) => res.status(200).send('ok'));
@@ -291,6 +367,7 @@ app.get('/info', (req, res) => {
     endpoints: {
       'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
       'POST /jpeg-to-mp4-upload': 'Envia JPEGs em multipart → devolve MP4 (n8n em outro volume)',
+      'POST /download-urls': 'Lista de URLs → baixa arquivos e salva em folderPath',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /health': 'Health check',
