@@ -12,7 +12,7 @@ services:
       - PORT=3000
       - DATA_ROOT=/data/render
     volumes:
-      - ffmpeg-data:/data
+      - n8n-srcleads_ffmpeg_render:/data/render
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
@@ -21,4 +21,5 @@ services:
       start_period: 10s
 
 volumes:
-  ffmpeg-data:
+  n8n-srcleads_ffmpeg_render:
+    external: true
