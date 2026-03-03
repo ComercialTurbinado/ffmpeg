@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    ports:
+      - "3000:3000"
     environment:
       - PORT=3000
       - DATA_ROOT=/data/render
