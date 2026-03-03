@@ -5,8 +5,6 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
-    ports:
-      - "3001:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.ffmpeg-api.loadbalancer.server.port=3000"

@@ -199,9 +199,11 @@ app.post('/video-with-audio', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.status(200).send('ok'));
 
-app.get('/', (req, res) => {
+app.get('/', (req, res) => res.status(200).send('ok'));
+
+app.get('/info', (req, res) => {
   res.json({
     name: 'FFmpeg API',
     version: '1.0',
@@ -209,7 +211,8 @@ app.get('/', (req, res) => {
       'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
-      'GET /health': 'Health check'
+      'GET /health': 'Health check',
+      'GET /info': 'Info da API'
     }
   });
 });
