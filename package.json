@@ -1,0 +1,14 @@
+{
+  "name": "ffmpeg-api",
+  "version": "1.0.0",
+  "description": "API para processamento de vídeo com FFmpeg (JPEG→MP4, merge MP4, vídeo+áudio)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "fluent-ffmpeg": "^2.1.3"
+  }
+}
