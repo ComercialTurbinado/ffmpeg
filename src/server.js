@@ -297,10 +297,17 @@ function parseDataUrl(str) {
   return { base64: str, ext: '.jpg' };
 }
 
+// Nome de arquivo seguro (só basename, sem path)
+function safeFilename(name) {
+  if (typeof name !== 'string') return null;
+  const base = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return base.length > 0 ? base : null;
+}
+
 app.post('/save-base64', async (req, res) => {
   const { folderPath, images } = req.body;
   if (!images || !Array.isArray(images) || images.length === 0) {
-    return res.status(400).json({ error: 'images (array de base64 ou data URL) é obrigatório e não pode ser vazio' });
+    return res.status(400).json({ error: 'images (array) é obrigatório e não pode ser vazio. Cada item: string (base64) ou { data: string, filename?: string }' });
   }
   if (!folderPath || typeof folderPath !== 'string') {
     return res.status(400).json({ error: 'folderPath é obrigatório' });
@@ -316,7 +323,11 @@ app.post('/save-base64', async (req, res) => {
     await fs.mkdir(dir, { recursive: true });
 
     for (let i = 0; i < images.length; i++) {
-      const parsed = parseDataUrl(images[i]);
+      const item = images[i];
+      const dataStr = typeof item === 'string' ? item : (item && item.data);
+      const customName = typeof item === 'object' && item && item.filename ? safeFilename(item.filename) : null;
+
+      const parsed = parseDataUrl(dataStr);
       if (!parsed) {
         return res.status(400).json({ error: `Item ${i + 1}: base64 ou data URL inválido` });
       }
@@ -324,7 +335,9 @@ app.post('/save-base64', async (req, res) => {
       if (buffer.length > MAX_FILE_SIZE_BASE64) {
         return res.status(400).json({ error: `Imagem ${i + 1} muito grande (>${MAX_FILE_SIZE_BASE64 / 1024 / 1024}MB)` });
       }
-      const filename = `frame_${String(i + 1).padStart(5, '0')}${parsed.ext}`;
+      const filename = customName
+        ? (path.extname(customName) ? customName : customName + parsed.ext)
+        : `frame_${String(i + 1).padStart(5, '0')}${parsed.ext}`;
       const filepath = path.join(dir, filename);
       await fs.writeFile(filepath, buffer);
       saved.push(filename);
