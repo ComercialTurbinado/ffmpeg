@@ -6,7 +6,8 @@ const os = require('os');
 const multer = require('multer');
 
 const app = express();
-app.use(express.json());
+// Limite alto para save-base64 (imagens em JSON); padrão é 100kb
+app.use(express.json({ limit: '100mb' }));
 
 const PORT = process.env.PORT || 3000;
 const DATA_ROOT = process.env.DATA_ROOT || '/data/render';
