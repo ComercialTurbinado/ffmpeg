@@ -435,6 +435,42 @@ app.post('/download-urls', async (req, res) => {
   }
 });
 
+// GET /list — lista arquivos e pastas em um caminho (query: path=relativo, default: raiz)
+app.get('/list', async (req, res) => {
+  let filePath = req.query.path;
+  if (filePath !== undefined && typeof filePath !== 'string') {
+    return res.status(400).json({ error: 'Query "path" deve ser string (caminho relativo a /data/render)' });
+  }
+  filePath = (filePath || '').replace(/^\/+/, '').replace(/^data\/render\/?/i, '').trim();
+  try {
+    const fullPath = resolveSafe(DATA_ROOT, filePath || '.');
+    const stat = await fs.stat(fullPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: 'O path deve ser uma pasta' });
+    }
+    const entries = await fs.readdir(fullPath, { withFileTypes: true });
+    const items = await Promise.all(
+      entries.map(async (e) => {
+        const item = { name: e.name, type: e.isDirectory() ? 'dir' : 'file' };
+        try {
+          const s = await fs.stat(path.join(fullPath, e.name));
+          item.size = s.size;
+          item.mtime = s.mtime.toISOString();
+        } catch (_) {}
+        return item;
+      })
+    );
+    res.json({
+      path: filePath || '.',
+      pathAbsolute: fullPath,
+      items: items.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)))
+    });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Pasta não encontrada' });
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
 // GET /file — baixa um arquivo de /data/render (path relativo no query: ?path=imob/.../video.mp4)
 app.get('/file', async (req, res) => {
   let filePath = req.query.path;
@@ -480,6 +516,7 @@ app.get('/info', (req, res) => {
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /file': 'Baixa arquivo (query: path=relativo/a/arquivo.mp4)',
+      'GET /list': 'Lista arquivos e pastas (query: path=relativo, opcional)',
       'GET /health': 'Health check',
       'GET /info': 'Info da API'
     }
