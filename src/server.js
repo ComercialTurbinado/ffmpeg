@@ -437,9 +437,14 @@ app.post('/download-urls', async (req, res) => {
 
 // GET /file — baixa um arquivo de /data/render (path relativo no query: ?path=imob/.../video.mp4)
 app.get('/file', async (req, res) => {
-  const filePath = req.query.path;
+  let filePath = req.query.path;
   if (!filePath || typeof filePath !== 'string') {
     return res.status(400).json({ error: 'Query "path" é obrigatório (caminho relativo a /data/render)' });
+  }
+  // Remove barra inicial e prefixo /data/render se vier na URL
+  filePath = filePath.replace(/^\/+/, '').replace(/^data\/render\/?/i, '').trim();
+  if (!filePath) {
+    return res.status(400).json({ error: 'Path não pode ser vazio' });
   }
   try {
     const fullPath = resolveSafe(DATA_ROOT, filePath);
