@@ -73,6 +73,7 @@ app.post('/jpeg-to-mp4', async (req, res) => {
       '-f', 'concat',
       '-safe', '0',
       '-i', listPath,
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-r', '30',
@@ -139,6 +140,7 @@ app.post('/jpeg-to-mp4-upload', upload.array('frames', 200), async (req, res) =>
 
     const ffmpeg = spawn(FFMPEG, [
       '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30', outMp4
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
