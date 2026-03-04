@@ -435,6 +435,30 @@ app.post('/download-urls', async (req, res) => {
   }
 });
 
+// GET /file — baixa um arquivo de /data/render (path relativo no query: ?path=imob/.../video.mp4)
+app.get('/file', async (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath || typeof filePath !== 'string') {
+    return res.status(400).json({ error: 'Query "path" é obrigatório (caminho relativo a /data/render)' });
+  }
+  try {
+    const fullPath = resolveSafe(DATA_ROOT, filePath);
+    await fs.access(fullPath);
+    const stat = await fs.stat(fullPath);
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: 'Não é um arquivo' });
+    }
+    const ext = path.extname(fullPath).toLowerCase();
+    const mime = ext === '.mp4' ? 'video/mp4' : ext === '.mp3' || ext === '.m4a' ? 'audio/mpeg' : 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(fullPath)}"`);
+    require('fs').createReadStream(fullPath).pipe(res);
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Arquivo não encontrado' });
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
 app.get('/health', (req, res) => res.status(200).send('ok'));
 
 app.get('/', (req, res) => res.status(200).send('ok'));
@@ -450,6 +474,7 @@ app.get('/info', (req, res) => {
       'POST /save-base64': 'Array de base64 ou data URL → salva imagens em folderPath',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
+      'GET /file': 'Baixa arquivo (query: path=relativo/a/arquivo.mp4)',
       'GET /health': 'Health check',
       'GET /info': 'Info da API'
     }
