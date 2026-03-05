@@ -12,6 +12,7 @@ app.use(express.json({ limit: '100mb' }));
 const PORT = process.env.PORT || 3000;
 const DATA_ROOT = process.env.DATA_ROOT || '/data/render';
 const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
+const BASE_URL = process.env.BASE_URL || ''; // opcional: ex. https://n8n-srcleads-ffmpeg-api..../host
 
 // Garantir que path está dentro de DATA_ROOT (evitar path traversal)
 function resolveSafe(basePath, subPath) {
@@ -449,9 +450,15 @@ app.get('/list', async (req, res) => {
       return res.status(400).json({ error: 'O path deve ser uma pasta' });
     }
     const entries = await fs.readdir(fullPath, { withFileTypes: true });
+    const prefix = filePath ? filePath + '/' : '';
     const items = await Promise.all(
       entries.map(async (e) => {
-        const item = { name: e.name, type: e.isDirectory() ? 'dir' : 'file' };
+        const itemPath = prefix + e.name;
+        const isDir = e.isDirectory();
+        const item = { name: e.name, path: itemPath, type: isDir ? 'dir' : 'file' };
+        if (BASE_URL) {
+          item.url = BASE_URL + (isDir ? '/list?path=' : '/file?path=') + encodeURIComponent(itemPath);
+        }
         try {
           const s = await fs.stat(path.join(fullPath, e.name));
           item.size = s.size;
