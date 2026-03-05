@@ -436,9 +436,38 @@ app.post('/download-urls', async (req, res) => {
   }
 });
 
-// GET /list — lista arquivos e pastas em um caminho (query: path=relativo, default: raiz)
+// GET /list — lista arquivos e pastas em um caminho (query: path=relativo, default: raiz; recursive=true para listar subpastas)
+const MAX_LIST_DEPTH = 50;
+
+async function listRecursive(dirFull, dirRelative, baseUrl, depth) {
+  if (depth > MAX_LIST_DEPTH) return [];
+  const entries = await fs.readdir(dirFull, { withFileTypes: true });
+  const result = [];
+  const prefix = dirRelative ? dirRelative + '/' : '';
+  for (const e of entries) {
+    const itemPath = prefix + e.name;
+    const isDir = e.isDirectory();
+    const item = { name: e.name, path: itemPath, type: isDir ? 'dir' : 'file' };
+    if (baseUrl) {
+      item.url = baseUrl + (isDir ? '/list?path=' : '/file?path=') + encodeURIComponent(itemPath);
+    }
+    try {
+      const s = await fs.stat(path.join(dirFull, e.name));
+      item.size = s.size;
+      item.mtime = s.mtime.toISOString();
+    } catch (_) {}
+    result.push(item);
+    if (isDir) {
+      const sub = await listRecursive(path.join(dirFull, e.name), itemPath, baseUrl, depth + 1);
+      result.push(...sub);
+    }
+  }
+  return result;
+}
+
 app.get('/list', async (req, res) => {
   let filePath = req.query.path;
+  const recursive = req.query.recursive === 'true' || req.query.recursive === '1';
   if (filePath !== undefined && typeof filePath !== 'string') {
     return res.status(400).json({ error: 'Query "path" deve ser string (caminho relativo a /data/render)' });
   }
@@ -449,6 +478,18 @@ app.get('/list', async (req, res) => {
     if (!stat.isDirectory()) {
       return res.status(400).json({ error: 'O path deve ser uma pasta' });
     }
+    const baseUrl = BASE_URL || null;
+
+    if (recursive) {
+      const items = await listRecursive(fullPath, filePath || '', baseUrl, 0);
+      return res.json({
+        path: filePath || '.',
+        pathAbsolute: fullPath,
+        recursive: true,
+        items: items.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.path.localeCompare(b.path)))
+      });
+    }
+
     const entries = await fs.readdir(fullPath, { withFileTypes: true });
     const prefix = filePath ? filePath + '/' : '';
     const items = await Promise.all(
@@ -523,7 +564,7 @@ app.get('/info', (req, res) => {
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /file': 'Baixa arquivo (query: path=relativo/a/arquivo.mp4)',
-      'GET /list': 'Lista arquivos e pastas (query: path=relativo, opcional)',
+      'GET /list': 'Lista arquivos e pastas (path=relativo; recursive=true para subpastas)',
       'GET /health': 'Health check',
       'GET /info': 'Info da API'
     }
