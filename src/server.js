@@ -548,6 +548,31 @@ app.get('/file', async (req, res) => {
   }
 });
 
+// GET /data/render/... — serve arquivo pelo caminho na URL (ex.: /data/render/imob/.../video.mp4)
+app.get(/^\/data\/render\/(.*)$/i, async (req, res) => {
+  let relativePath = (req.params[0] || req.path.replace(/^\/data\/render\/?/i, '')).trim();
+  if (!relativePath) {
+    return res.status(400).json({ error: 'Caminho vazio' });
+  }
+  try {
+    relativePath = decodeURIComponent(relativePath).replace(/^\/+/, '').trim();
+    if (!relativePath) return res.status(400).json({ error: 'Caminho inválido' });
+    const fullPath = resolveSafe(DATA_ROOT, relativePath);
+    const stat = await fs.stat(fullPath);
+    if (!stat.isFile()) {
+      return res.status(404).json({ error: 'Não é um arquivo ou não encontrado' });
+    }
+    const ext = path.extname(fullPath).toLowerCase();
+    const mime = ext === '.mp4' ? 'video/mp4' : ext === '.mp3' || ext === '.m4a' ? 'audio/mpeg' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.png' ? 'image/png' : 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `inline; filename="${path.basename(fullPath)}"`);
+    require('fs').createReadStream(fullPath).pipe(res);
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Arquivo não encontrado' });
+    res.status(500).json({ error: err.message || 'Erro ao processar' });
+  }
+});
+
 app.get('/health', (req, res) => res.status(200).send('ok'));
 
 app.get('/', (req, res) => res.status(200).send('ok'));
@@ -564,6 +589,7 @@ app.get('/info', (req, res) => {
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
       'GET /file': 'Baixa arquivo (query: path=relativo/a/arquivo.mp4)',
+      'GET /data/render/*': 'Serve arquivo pela URL (ex.: /data/render/imob/.../video.mp4)',
       'GET /list': 'Lista arquivos e pastas (path=relativo; recursive=true para subpastas)',
       'GET /health': 'Health check',
       'GET /info': 'Info da API'
