@@ -601,9 +601,13 @@ app.get('/file', async (req, res) => {
       return res.status(400).json({ error: 'Não é um arquivo' });
     }
     const ext = path.extname(fullPath).toLowerCase();
-    const mime = ext === '.mp4' ? 'video/mp4' : ext === '.mp3' || ext === '.m4a' ? 'audio/mpeg' : 'application/octet-stream';
+    const mime = ext === '.mp4' ? 'video/mp4'
+      : ext === '.mp3' || ext === '.m4a' ? 'audio/mpeg'
+      : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp'
+      : 'application/octet-stream';
+    const isImage = /^image\//.test(mime);
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(fullPath)}"`);
+    res.setHeader('Content-Disposition', `${isImage ? 'inline' : 'attachment'}; filename="${path.basename(fullPath)}"`);
     require('fs').createReadStream(fullPath).pipe(res);
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Arquivo não encontrado' });
