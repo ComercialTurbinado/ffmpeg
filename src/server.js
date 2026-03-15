@@ -12,6 +12,8 @@ app.use(express.json({ limit: '100mb' }));
 const PORT = process.env.PORT || 3000;
 const DATA_ROOT = process.env.DATA_ROOT || '/data/render';
 const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
+/** FPS do vídeo gerado a partir de sequência de JPEGs (deve bater com a animação do poster: 24 fps = 10s para 240 frames). */
+const FPS_VIDEO = 24;
 const BASE_URL = process.env.BASE_URL || ''; // opcional: ex. https://n8n-srcleads-ffmpeg-api..../host
 
 // Garantir que path está dentro de DATA_ROOT (evitar path traversal)
@@ -33,7 +35,7 @@ function naturalSort(files) {
   });
 }
 
-// POST /jpeg-to-mp4 — pasta com JPEGs → MP4 30fps (qualquer resolução: 1080x1920, 1920x1080, 1080x1350, etc.)
+// POST /jpeg-to-mp4 — pasta com JPEGs → MP4 24fps (qualquer resolução: 1080x1920, 1920x1080, 1080x1350, etc.)
 app.post('/jpeg-to-mp4', async (req, res) => {
   const { folderPath, outputPath } = req.body;
   if (!folderPath) {
@@ -58,7 +60,7 @@ app.post('/jpeg-to-mp4', async (req, res) => {
     }
 
     const listPath = path.join(os.tmpdir(), `concat-${Date.now()}.txt`);
-    const duration = 1 / 30;
+    const duration = 1 / FPS_VIDEO;
     const lines = [];
     for (let i = 0; i < jpegs.length; i++) {
       const file = jpegs[i].replace(/'/g, "'\\''");
@@ -78,7 +80,7 @@ app.post('/jpeg-to-mp4', async (req, res) => {
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
-      '-r', '30',
+      '-r', String(FPS_VIDEO),
       outPath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -127,7 +129,7 @@ app.post('/jpeg-to-mp4-upload', upload.array('frames', 200), async (req, res) =>
     }
 
     const listPath = path.join(tmpDir, 'list.txt');
-    const duration = 1 / 30;
+    const duration = 1 / FPS_VIDEO;
     const lines = [];
     const written = await fs.readdir(tmpDir).then((names) => names.filter((n) => /\.(jpe?g|JPE?G)$/i.test(n)).sort());
     for (let i = 0; i < written.length; i++) {
@@ -143,7 +145,7 @@ app.post('/jpeg-to-mp4-upload', upload.array('frames', 200), async (req, res) =>
     const ffmpeg = spawn(FFMPEG, [
       '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30', outMp4
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', String(FPS_VIDEO), outMp4
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
@@ -649,7 +651,7 @@ app.get('/info', (req, res) => {
     name: 'FFmpeg API',
     version: '1.0',
     endpoints: {
-      'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 30fps',
+      'POST /jpeg-to-mp4': 'Sequência de JPEGs → MP4 24fps',
       'POST /jpeg-to-mp4-upload': 'Envia JPEGs em multipart → devolve MP4 (n8n em outro volume)',
       'POST /download-urls': 'Lista de URLs → baixa arquivos e salva em folderPath',
       'POST /save-base64': 'Array de base64 ou data URL → salva imagens em folderPath',

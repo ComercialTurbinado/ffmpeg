@@ -1,7 +1,7 @@
 # FFmpeg API para EasyPanel
 
 API em Node.js + FFmpeg para:
-1. **JPEG → MP4** — pasta com sequência de JPEGs → vídeo 30fps (qualquer resolução: 1080×1920, 1920×1080, 1080×1350, etc.)
+1. **JPEG → MP4** — pasta com sequência de JPEGs → vídeo 24fps (qualquer resolução: 1080×1920, 1920×1080, 1080×1350, etc.)
 2. **Merge MP4** — vários MP4s → um único vídeo
 3. **Vídeo + áudio** — junta um vídeo com um arquivo de áudio
 
@@ -40,7 +40,7 @@ Todos os caminhos enviados nos endpoints são relativos a `DATA_ROOT` (ou seja, 
 
 ## Endpoints
 
-### 1. JPEG → MP4 (30fps)
+### 1. JPEG → MP4 (24fps)
 
 **POST** `/jpeg-to-mp4`
 
