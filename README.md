@@ -184,7 +184,7 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 - `url` — URL pública do áudio (o servidor baixa e transcreve).
 - `audioPath` — caminho relativo a `/data/render` (opção A).
 - `audio` — string em base64 ou data URL (opção B).
-- `language` — opcional; código ISO (ex.: `pt`, `en`).
+- `language` — opcional; código ISO (ex.: `pt`, `en`). No Whisper local o padrão é `portuguese` (transcrição em português do Brasil).
 - `response_format` — opcional; `text` (padrão), `json`, `srt`, `verbose_json`, `vtt`.
 
 **Resposta (exemplo com response_format text):** `{ "text": "transcrição aqui..." }`

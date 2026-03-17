@@ -73,10 +73,16 @@ async function audioFileToWhisperInput(audioPath) {
   }
 }
 
-async function transcribeWithLocalWhisper(audioPath) {
+async function transcribeWithLocalWhisper(audioPath, options = {}) {
+  const { language = 'portuguese' } = options;
   const transcriber = await getLocalTranscriber();
   const audioData = await audioFileToWhisperInput(audioPath);
-  const output = await transcriber(audioData, { chunk_length_s: 30, stride_length_s: 5 });
+  const output = await transcriber(audioData, {
+    chunk_length_s: 30,
+    stride_length_s: 5,
+    language,
+    task: 'transcribe'
+  });
   return output;
 }
 
@@ -575,8 +581,10 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
     if (openai) {
       result = await transcribeAudio(streamOrPath, { language, response_format });
     } else {
-      // Whisper local (Transformers.js) — sem API key
-      const output = await transcribeWithLocalWhisper(streamOrPath);
+      // Whisper local (Transformers.js) — sem API key; padrão português
+      const output = await transcribeWithLocalWhisper(streamOrPath, {
+        language: language || 'portuguese'
+      });
       result = typeof output === 'string' ? { text: output } : (output && typeof output.text !== 'undefined' ? output : { text: String(output) });
     }
     if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
