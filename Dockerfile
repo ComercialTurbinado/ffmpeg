@@ -1,7 +1,9 @@
-FROM node:20-alpine
+# Debian (glibc) necessário para onnxruntime-node usado pelo @huggingface/transformers (Whisper)
+FROM node:20-slim
 
-# Instalar FFmpeg e curl (healthcheck)
-RUN apk add --no-cache ffmpeg curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ffmpeg curl \
+  && rm -rf /var/lib/apt/lists/* \
   && which ffmpeg \
   && ffmpeg -version | head -1
 

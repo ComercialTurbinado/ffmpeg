@@ -31,6 +31,7 @@ API em Node.js + FFmpeg para:
 - Confira os **logs** do container (pode ter crash ou OOM ao carregar Whisper).
 - **Health check:** a API expõe `GET /health` → responde `ok`. No Easypanel, configure o health check para esse path na **mesma porta** em que o app sobe (ex.: `3000` ou a variável `PORT` que o painel injeta). O Dockerfile já inclui `HEALTHCHECK`; se o painel usar outro esquema, aponte para `/health`.
 - **Memória:** Whisper local (Transformers.js) usa bastante RAM na primeira requisição; aumente o limite de memória do app se o container for morto (OOM).
+- **POST /transcribe devolve a página de erro mas GET /health responde "ok":** a requisição de transcrição demora (1–3 min na primeira vez, 30–90 s depois). O proxy (Traefik) pode estar encerrando por **timeout**. Aumente o timeout do proxy para este serviço (ex.: 180 s). No Easypanel isso costuma ser feito via configuração customizada do Traefik ou anotações do app; consulte a doc do Easypanel (Custom Traefik Configuration).
 
 **Pasta de trabalho:** a raiz dos caminhos é **`/data/render`**. O n8n pode criar subpastas dinamicamente (ex.: `job-123`, `2025-03-03`, etc.); a API cria as pastas de destino automaticamente quando gera o arquivo de saída.
 
