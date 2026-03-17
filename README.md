@@ -27,6 +27,11 @@ API em Node.js + FFmpeg para:
 
 4. Build e start do serviço. A API fica em `http://seu-servidor:3000`.
 
+**Se aparecer "Service is not reachable" no Easypanel:**
+- Confira os **logs** do container (pode ter crash ou OOM ao carregar Whisper).
+- **Health check:** a API expõe `GET /health` → responde `ok`. No Easypanel, configure o health check para esse path na **mesma porta** em que o app sobe (ex.: `3000` ou a variável `PORT` que o painel injeta). O Dockerfile já inclui `HEALTHCHECK`; se o painel usar outro esquema, aponte para `/health`.
+- **Memória:** Whisper local (Transformers.js) usa bastante RAM na primeira requisição; aumente o limite de memória do app se o container for morto (OOM).
+
 **Pasta de trabalho:** a raiz dos caminhos é **`/data/render`**. O n8n pode criar subpastas dinamicamente (ex.: `job-123`, `2025-03-03`, etc.); a API cria as pastas de destino automaticamente quando gera o arquivo de saída.
 
 ## Variáveis de ambiente

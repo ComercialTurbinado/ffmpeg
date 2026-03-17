@@ -503,6 +503,14 @@ async function transcribeAudio(filePathOrStream, options = {}) {
   return result;
 }
 
+app.get('/transcribe', (req, res) => {
+  res.status(405).json({
+    error: 'Use POST /transcribe',
+    message: 'Envie o áudio por: url (URL), audioPath (caminho no servidor), multipart "audio", ou body.audio (base64/data URL).',
+    example: { url: 'https://exemplo.com/audio.mp3' }
+  });
+});
+
 app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
   const { url: audioUrl, audioPath, audio: audioBase64, language, response_format } = req.body || {};
   let tmpPath = null;
