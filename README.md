@@ -189,6 +189,7 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 - `language` — opcional; código ISO (ex.: `pt`, `en`). No Whisper local o padrão é `portuguese` (transcrição em português do Brasil).
 - `response_format` — opcional; `text` (padrão), `json`, `srt`, `verbose_json`, `vtt`.
 - `correctWithDeepSeek` — opcional; se `true` e `DEEPSEEK_API_KEY` estiver definida, o texto (ou cada segmento do SRT) é enviado à DeepSeek para correção de português antes de retornar.
+- `maxCharsPerCue` — opcional (apenas quando `response_format` = `srt`); número máximo de caracteres por legenda. Padrão: 55. Mínimo aceito: 11. Máximo: 120.
 
 **Resposta (exemplo com response_format text):** `{ "text": "transcrição aqui..." }`
 

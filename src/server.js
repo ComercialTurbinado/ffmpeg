@@ -179,7 +179,7 @@ async function correctChunksWithDeepSeek(chunkTexts) {
 }
 
 function localWhisperOutputToSrt(output, options = {}) {
-  const { applyCorrections = true } = options;
+  const { applyCorrections = true, maxCharsPerCue: maxCharsFromOptions } = options;
   if (!output) return '';
 
   const chunks = Array.isArray(output.chunks) ? output.chunks : [];
@@ -190,7 +190,9 @@ function localWhisperOutputToSrt(output, options = {}) {
     return `1\n00:00:00,000 --> 00:00:10,000\n${finalText}\n`;
   }
 
-  const MAX_CHARS_PER_CUE = 55;
+  const MAX_CHARS_PER_CUE = Number.isFinite(maxCharsFromOptions) && maxCharsFromOptions > 10
+    ? Math.min(maxCharsFromOptions, 120)
+    : 55;
   const MIN_CHARS_PREFER_PUNCTUATION = 40;
   const PUNCTUATION_REGEX = /[,.;:–—]/;
 
@@ -697,7 +699,15 @@ app.get('/transcribe', (req, res) => {
 });
 
 app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
-  const { url: audioUrl, audioPath, audio: audioBase64, language, response_format, correctWithDeepSeek } = req.body || {};
+  const {
+    url: audioUrl,
+    audioPath,
+    audio: audioBase64,
+    language,
+    response_format,
+    correctWithDeepSeek,
+    maxCharsPerCue
+  } = req.body || {};
   let tmpPath = null;
   const useDeepSeek = Boolean(deepseek && correctWithDeepSeek);
 
@@ -779,7 +789,10 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
             }))
           };
         }
-        const srt = localWhisperOutputToSrt(toConvert, { applyCorrections: !useDeepSeek });
+        const srt = localWhisperOutputToSrt(toConvert, {
+          applyCorrections: !useDeepSeek,
+          maxCharsPerCue: typeof maxCharsPerCue === 'number' ? maxCharsPerCue : undefined
+        });
         if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         return res.send(srt || '');
