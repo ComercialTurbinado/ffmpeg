@@ -146,6 +146,14 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 
 Áudio até 25 MB. Formatos: mp3, m4a, wav, webm, etc.
 
+**Opção — URL do áudio (JSON):**
+
+```json
+{
+  "url": "https://exemplo.com/audio/narracao.mp3"
+}
+```
+
 **Opção A — caminho no servidor (JSON):**
 
 ```json
@@ -167,6 +175,7 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 
 **Opção C — upload multipart:** campo `audio` com o arquivo (mp3, m4a, wav, webm, etc.).
 
+- `url` — URL pública do áudio (o servidor baixa e transcreve).
 - `audioPath` — caminho relativo a `/data/render` (opção A).
 - `audio` — string em base64 ou data URL (opção B).
 - `language` — opcional; código ISO (ex.: `pt`, `en`).

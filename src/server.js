@@ -479,8 +479,8 @@ app.post('/save-audio-base64', async (req, res) => {
   }
 });
 
-// POST /transcribe — transcrição de áudio com OpenAI Whisper (requer OPENAI_API_KEY)
-// Aceita: audioPath (relativo a DATA_ROOT), ou multipart campo "audio", ou body.audio em base64/data URL
+// POST /transcribe — transcrição de áudio com OpenAI Whisper ou Whisper local
+// Aceita: url (URL do áudio), audioPath (relativo a DATA_ROOT), multipart "audio", ou body.audio (base64/data URL)
 const transcribeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: WHISPER_MAX_FILE_SIZE, files: 1 }
@@ -504,7 +504,7 @@ async function transcribeAudio(filePathOrStream, options = {}) {
 }
 
 app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
-  const { audioPath, audio: audioBase64, language, response_format } = req.body || {};
+  const { url: audioUrl, audioPath, audio: audioBase64, language, response_format } = req.body || {};
   let tmpPath = null;
 
   try {
@@ -512,7 +512,21 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
 
     let streamOrPath;
 
-    if (req.file && req.file.buffer) {
+    if (audioUrl && typeof audioUrl === 'string' && isValidUrl(audioUrl.trim())) {
+      const resFetch = await fetch(audioUrl.trim(), { redirect: 'follow' });
+      if (!resFetch.ok) {
+        return res.status(400).json({ error: `Falha ao baixar áudio: ${resFetch.status} ${resFetch.statusText}` });
+      }
+      const buf = Buffer.from(await resFetch.arrayBuffer());
+      if (buf.length > maxSize) {
+        return res.status(400).json({ error: `Áudio da URL muito grande (máx. ${Math.round(maxSize / 1024 / 1024)} MB)` });
+      }
+      const ext = path.extname(new URL(audioUrl).pathname).toLowerCase() || '.mp3';
+      const safeExt = /^\.(mp3|wav|m4a|ogg|webm|flac|opus)$/.test(ext) ? ext : '.mp3';
+      tmpPath = path.join(os.tmpdir(), `whisper-url-${Date.now()}${safeExt}`);
+      await fs.writeFile(tmpPath, buf);
+      streamOrPath = tmpPath;
+    } else if (req.file && req.file.buffer) {
       if (req.file.size > maxSize) {
         return res.status(400).json({ error: `Arquivo de áudio muito grande (máx. ${Math.round(maxSize / 1024 / 1024)} MB)` });
       }
@@ -545,7 +559,7 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
       streamOrPath = tmpPath;
     } else {
       return res.status(400).json({
-        error: 'Envie o áudio por: audioPath (caminho relativo), campo multipart "audio", ou body.audio (base64/data URL)'
+        error: 'Envie o áudio por: url (URL do áudio), audioPath (caminho relativo), campo multipart "audio", ou body.audio (base64/data URL)'
       });
     }
 
