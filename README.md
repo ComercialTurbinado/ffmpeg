@@ -35,6 +35,8 @@ API em Node.js + FFmpeg para:
 |-----------|--------|------------------------------|
 | `PORT`    | 3000   | Porta HTTP da API            |
 | `DATA_ROOT` | /data/render | Raiz dos caminhos de arquivos |
+| `OPENAI_API_KEY` | — | Opcional. Se definida, usa a API OpenAI para transcrição. Se não definida, usa Whisper local (Transformers.js), sem custo nem API key. |
+| `WHISPER_LOCAL_MODEL` | Xenova/whisper-tiny | Modelo Hugging Face para Whisper local (ex.: Xenova/whisper-small para mais precisão). |
 
 Todos os caminhos enviados nos endpoints são relativos a `DATA_ROOT` (ou seja, a `/data/render`). O n8n pode criar pastas dinamicamente (ex.: por job ou por data); a API cria os diretórios pai do arquivo de saída automaticamente (`mkdir -p`), então basta enviar o `outputPath` (ou `folderPath`) desejado.
 
@@ -130,6 +132,47 @@ curl -X POST http://localhost:3000/video-with-audio \
   -H "Content-Type: application/json" \
   -d '{"videoPath": "merged.mp4", "audioPath": "musica.mp3", "outputPath": "final.mp4"}'
 ```
+
+---
+
+### 4. Transcrição de áudio (Whisper)
+
+**POST** `/transcribe`
+
+Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
+
+- **Sem `OPENAI_API_KEY`:** usa Whisper **local** (Transformers.js), sem custo e sem API key. Na primeira requisição o modelo é baixado e cacheado.
+- **Com `OPENAI_API_KEY`:** usa a API da OpenAI (mesmo formato de resposta).
+
+Áudio até 25 MB. Formatos: mp3, m4a, wav, webm, etc.
+
+**Opção A — caminho no servidor (JSON):**
+
+```json
+{
+  "audioPath": "pasta/meu-audio.mp3",
+  "language": "pt",
+  "response_format": "text"
+}
+```
+
+**Opção B — áudio em base64 (JSON):**
+
+```json
+{
+  "audio": "data:audio/mpeg;base64,...",
+  "language": "pt"
+}
+```
+
+**Opção C — upload multipart:** campo `audio` com o arquivo (mp3, m4a, wav, webm, etc.).
+
+- `audioPath` — caminho relativo a `/data/render` (opção A).
+- `audio` — string em base64 ou data URL (opção B).
+- `language` — opcional; código ISO (ex.: `pt`, `en`).
+- `response_format` — opcional; `text` (padrão), `json`, `srt`, `verbose_json`, `vtt`.
+
+**Resposta (exemplo com response_format text):** `{ "text": "transcrição aqui..." }`
 
 ---
 

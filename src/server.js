@@ -4,6 +4,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 const os = require('os');
 const multer = require('multer');
+const OpenAI = require('openai').default;
+const { WaveFile } = require('wavefile');
 
 const app = express();
 // Limite alto para save-base64 (imagens em JSON); padrão é 100kb
@@ -15,6 +17,68 @@ const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 /** FPS do vídeo gerado a partir de sequência de JPEGs (deve bater com a animação do poster: 24 fps = 10s para 240 frames). */
 const FPS_VIDEO = 24;
 const BASE_URL = process.env.BASE_URL || ''; // opcional: ex. https://n8n-srcleads-ffmpeg-api..../host
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const WHISPER_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB (limite da API Whisper)
+const WHISPER_LOCAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // mesmo limite para Whisper local
+
+// Whisper local (Transformers.js) — pipeline carregado sob demanda
+let localTranscriberPromise = null;
+const WHISPER_LOCAL_MODEL = process.env.WHISPER_LOCAL_MODEL || 'Xenova/whisper-tiny';
+
+async function getLocalTranscriber() {
+  if (!localTranscriberPromise) {
+    localTranscriberPromise = (async () => {
+      const { pipeline } = await import('@huggingface/transformers');
+      return pipeline('automatic-speech-recognition', WHISPER_LOCAL_MODEL);
+    })();
+  }
+  return localTranscriberPromise;
+}
+
+// Converte arquivo de áudio para Float32Array 16kHz mono (formato esperado pelo Whisper local)
+async function audioFileToWhisperInput(audioPath) {
+  const wavPath = path.join(os.tmpdir(), `whisper-wav-${Date.now()}.wav`);
+  const ffmpeg = spawn(FFMPEG, [
+    '-y', '-i', audioPath,
+    '-ar', '16000', '-ac', '1', '-f', 'wav',
+    wavPath
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let stderr = '';
+  ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+  const code = await new Promise((resolve) => ffmpeg.on('close', resolve));
+
+  try {
+    if (code !== 0) {
+      throw new Error(stderr.slice(-500) || 'FFmpeg falhou ao converter áudio');
+    }
+    const buffer = await fs.readFile(wavPath);
+    const wav = new WaveFile(buffer);
+    wav.toBitDepth('32f');
+    wav.toSampleRate(16000);
+    let audioData = wav.getSamples();
+    if (Array.isArray(audioData)) {
+      if (audioData.length > 1) {
+        const SCALING_FACTOR = Math.sqrt(2);
+        for (let i = 0; i < audioData[0].length; ++i) {
+          audioData[0][i] = (SCALING_FACTOR * (audioData[0][i] + audioData[1][i])) / 2;
+        }
+      }
+      audioData = audioData[0];
+    }
+    return Float32Array.from(audioData);
+  } finally {
+    await fs.unlink(wavPath).catch(() => {});
+  }
+}
+
+async function transcribeWithLocalWhisper(audioPath) {
+  const transcriber = await getLocalTranscriber();
+  const audioData = await audioFileToWhisperInput(audioPath);
+  const output = await transcriber(audioData, { chunk_length_s: 30, stride_length_s: 5 });
+  return output;
+}
 
 // Garantir que path está dentro de DATA_ROOT (evitar path traversal)
 function resolveSafe(basePath, subPath) {
@@ -415,6 +479,96 @@ app.post('/save-audio-base64', async (req, res) => {
   }
 });
 
+// POST /transcribe — transcrição de áudio com OpenAI Whisper (requer OPENAI_API_KEY)
+// Aceita: audioPath (relativo a DATA_ROOT), ou multipart campo "audio", ou body.audio em base64/data URL
+const transcribeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: WHISPER_MAX_FILE_SIZE, files: 1 }
+});
+
+async function transcribeAudio(filePathOrStream, options = {}) {
+  if (!openai) {
+    throw new Error('Whisper não configurado: defina OPENAI_API_KEY');
+  }
+  const { language, response_format } = options;
+  const payload = {
+    file: typeof filePathOrStream === 'string'
+      ? require('fs').createReadStream(filePathOrStream)
+      : filePathOrStream,
+    model: 'whisper-1'
+  };
+  if (language) payload.language = language;
+  if (response_format) payload.response_format = response_format;
+  const result = await openai.audio.transcriptions.create(payload);
+  return result;
+}
+
+app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
+  const { audioPath, audio: audioBase64, language, response_format } = req.body || {};
+  let tmpPath = null;
+
+  try {
+    const maxSize = openai ? WHISPER_MAX_FILE_SIZE : WHISPER_LOCAL_MAX_FILE_SIZE;
+
+    let streamOrPath;
+
+    if (req.file && req.file.buffer) {
+      if (req.file.size > maxSize) {
+        return res.status(400).json({ error: `Arquivo de áudio muito grande (máx. ${Math.round(maxSize / 1024 / 1024)} MB)` });
+      }
+      const ext = path.extname(req.file.originalname) || '.mp3';
+      tmpPath = path.join(os.tmpdir(), `whisper-${Date.now()}${ext}`);
+      await fs.writeFile(tmpPath, req.file.buffer);
+      streamOrPath = tmpPath;
+    } else if (audioPath && typeof audioPath === 'string') {
+      const fullPath = resolveSafe(DATA_ROOT, audioPath.trim());
+      await fs.access(fullPath);
+      const stat = await fs.stat(fullPath);
+      if (!stat.isFile()) {
+        return res.status(400).json({ error: 'audioPath não é um arquivo' });
+      }
+      if (stat.size > maxSize) {
+        return res.status(400).json({ error: `Arquivo de áudio muito grande (máx. ${Math.round(maxSize / 1024 / 1024)} MB)` });
+      }
+      streamOrPath = fullPath;
+    } else if (audioBase64) {
+      const parsed = parseAudioDataUrl(typeof audioBase64 === 'string' ? audioBase64 : (audioBase64.data || audioBase64));
+      if (!parsed) {
+        return res.status(400).json({ error: 'audio inválido: use base64 ou data URL (ex.: data:audio/mpeg;base64,...)' });
+      }
+      const buffer = Buffer.from(parsed.base64, 'base64');
+      if (buffer.length > maxSize) {
+        return res.status(400).json({ error: `Áudio muito grande (máx. ${Math.round(maxSize / 1024 / 1024)} MB)` });
+      }
+      tmpPath = path.join(os.tmpdir(), `whisper-${Date.now()}${parsed.ext}`);
+      await fs.writeFile(tmpPath, buffer);
+      streamOrPath = tmpPath;
+    } else {
+      return res.status(400).json({
+        error: 'Envie o áudio por: audioPath (caminho relativo), campo multipart "audio", ou body.audio (base64/data URL)'
+      });
+    }
+
+    let result;
+    if (openai) {
+      result = await transcribeAudio(streamOrPath, { language, response_format });
+    } else {
+      // Whisper local (Transformers.js) — sem API key
+      const output = await transcribeWithLocalWhisper(streamOrPath);
+      result = typeof output === 'string' ? { text: output } : (output && typeof output.text !== 'undefined' ? output : { text: String(output) });
+    }
+    if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
+
+    res.json(result);
+  } catch (err) {
+    if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const msg = err.message || 'Erro ao transcrever';
+    const status = err.status === 401 ? 401 : err.status === 429 ? 429 : 500;
+    res.status(status).json({ error: msg });
+  }
+});
+
 // POST /download-urls — recebe lista de URLs, baixa os arquivos e salva na pasta informada (relativa a /data/render)
 const MAX_DOWNLOAD_URLS = 200;
 const DOWNLOAD_TIMEOUT_MS = 60000; // 1 min por arquivo
@@ -658,6 +812,7 @@ app.get('/info', (req, res) => {
       'POST /save-audio-base64': 'Array de base64 ou data URL (áudio: mp3, m4a, wav, etc.) → salva em folderPath',
       'POST /merge-mp4': 'Vários MP4s → um único vídeo',
       'POST /video-with-audio': 'Vídeo + áudio → um arquivo',
+      'POST /transcribe': 'Áudio → transcrição (Whisper local ou OpenAI se OPENAI_API_KEY estiver definida)',
       'GET /file': 'Baixa arquivo (query: path=relativo/a/arquivo.mp4)',
       'GET /data/render/*': 'Serve arquivo pela URL (ex.: /data/render/imob/.../video.mp4)',
       'GET /list': 'Lista arquivos e pastas (path=relativo; recursive=true para subpastas)',
