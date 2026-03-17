@@ -14,6 +14,10 @@ RUN npm ci --omit=dev
 
 COPY src ./src
 
+# Permissão para node escrever (cache do Transformers.js em node_modules e HF_HOME)
+ENV HF_HOME=/app/.cache/huggingface
+RUN mkdir -p /app/.cache/huggingface && chown -R node:node /app
+
 EXPOSE 3000
 
 # Health check: GET /health na mesma porta do app (PORT ou 3000)
