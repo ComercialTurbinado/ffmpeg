@@ -189,6 +189,11 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 
 **Resposta (exemplo com response_format text):** `{ "text": "transcrição aqui..." }`
 
+Se `response_format` for **`srt`**:
+
+- Com **`OPENAI_API_KEY`** → usa o formato SRT da própria API da OpenAI.
+- Sem `OPENAI_API_KEY` (Whisper local) → o servidor monta um SRT a partir dos timestamps dos trechos reconhecidos.
+
 ---
 
 ### Health check

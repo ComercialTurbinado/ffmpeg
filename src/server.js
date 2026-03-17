@@ -74,16 +74,57 @@ async function audioFileToWhisperInput(audioPath) {
 }
 
 async function transcribeWithLocalWhisper(audioPath, options = {}) {
-  const { language = 'portuguese' } = options;
+  const { language = 'portuguese', response_format } = options;
   const transcriber = await getLocalTranscriber();
   const audioData = await audioFileToWhisperInput(audioPath);
   const output = await transcriber(audioData, {
     chunk_length_s: 30,
     stride_length_s: 5,
     language,
-    task: 'transcribe'
+    task: 'transcribe',
+    // Timestamps só são necessários quando o cliente pede SRT
+    return_timestamps: response_format === 'srt' ? true : undefined
   });
   return output;
+}
+
+function secondsToSrtTimestamp(seconds) {
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const ms = totalMs % 1000;
+  const totalSec = (totalMs - ms) / 1000;
+  const s = totalSec % 60;
+  const totalMin = (totalSec - s) / 60;
+  const m = totalMin % 60;
+  const h = (totalMin - m) / 60;
+
+  const pad = (n, size) => String(n).padStart(size, '0');
+  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)},${pad(ms, 3)}`;
+}
+
+function localWhisperOutputToSrt(output) {
+  if (!output) return '';
+
+  const chunks = Array.isArray(output.chunks) ? output.chunks : [];
+  if (!chunks.length) {
+    const text = typeof output.text === 'string' ? output.text.trim() : String(output);
+    if (!text) return '';
+    return `1\n00:00:00,000 --> 00:00:10,000\n${text}\n`;
+  }
+
+  let index = 1;
+  const lines = [];
+
+  for (const chunk of chunks) {
+    if (!chunk || !chunk.text || !Array.isArray(chunk.timestamp)) continue;
+    const [start, end] = chunk.timestamp;
+    const text = String(chunk.text || '').trim();
+    if (!text) continue;
+    const startStr = secondsToSrtTimestamp(start || 0);
+    const endStr = secondsToSrtTimestamp(end || (start + 4 || 4));
+    lines.push(`${index++}\n${startStr} --> ${endStr}\n${text}\n`);
+  }
+
+  return lines.join('\n');
 }
 
 // Garantir que path está dentro de DATA_ROOT (evitar path traversal)
@@ -583,9 +624,20 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
     } else {
       // Whisper local (Transformers.js) — sem API key; padrão português
       const output = await transcribeWithLocalWhisper(streamOrPath, {
-        language: language || 'portuguese'
+        language: language || 'portuguese',
+        response_format
       });
-      result = typeof output === 'string' ? { text: output } : (output && typeof output.text !== 'undefined' ? output : { text: String(output) });
+
+      if (response_format === 'srt') {
+        const srt = localWhisperOutputToSrt(output);
+        if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.send(srt || '');
+      }
+
+      result = typeof output === 'string'
+        ? { text: output }
+        : (output && typeof output.text !== 'undefined' ? output : { text: String(output) });
     }
     if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
 
