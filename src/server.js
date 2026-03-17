@@ -113,15 +113,55 @@ function localWhisperOutputToSrt(output) {
 
   let index = 1;
   const lines = [];
+  const MAX_CHARS_PER_CUE = 55;
 
   for (const chunk of chunks) {
     if (!chunk || !chunk.text || !Array.isArray(chunk.timestamp)) continue;
-    const [start, end] = chunk.timestamp;
-    const text = String(chunk.text || '').trim();
-    if (!text) continue;
-    const startStr = secondsToSrtTimestamp(start || 0);
-    const endStr = secondsToSrtTimestamp(end || (start + 4 || 4));
-    lines.push(`${index++}\n${startStr} --> ${endStr}\n${text}\n`);
+    const [startRaw, endRaw] = chunk.timestamp;
+    const fullText = String(chunk.text || '').trim();
+    if (!fullText) continue;
+
+    const start = typeof startRaw === 'number' ? startRaw : 0;
+    const end = typeof endRaw === 'number' && endRaw > start ? endRaw : start + 4;
+    const totalDuration = Math.max(0.5, end - start);
+
+    if (fullText.length <= MAX_CHARS_PER_CUE) {
+      const startStr = secondsToSrtTimestamp(start);
+      const endStr = secondsToSrtTimestamp(end);
+      lines.push(`${index++}\n${startStr} --> ${endStr}\n${fullText}\n`);
+      continue;
+    }
+
+    // Quebra texto longo em pedaços menores por palavras, mantendo tempo proporcional
+    const words = fullText.split(/\s+/);
+    const parts = [];
+    let current = '';
+
+    for (const w of words) {
+      const candidate = current ? current + ' ' + w : w;
+      if (candidate.length > MAX_CHARS_PER_CUE && current) {
+        parts.push(current);
+        current = w;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) parts.push(current);
+
+    const totalChars = parts.reduce((sum, p) => sum + p.length, 0) || 1;
+    let cursor = start;
+
+    for (const part of parts) {
+      const ratio = part.length / totalChars;
+      const partDuration = Math.max(0.5, totalDuration * ratio);
+      const partStart = cursor;
+      const partEnd = cursor + partDuration;
+      cursor = partEnd;
+
+      const startStr = secondsToSrtTimestamp(partStart);
+      const endStr = secondsToSrtTimestamp(partEnd);
+      lines.push(`${index++}\n${startStr} --> ${endStr}\n${part}\n`);
+    }
   }
 
   return lines.join('\n');
