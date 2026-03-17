@@ -19,6 +19,11 @@ const FPS_VIDEO = 24;
 const BASE_URL = process.env.BASE_URL || ''; // opcional: ex. https://n8n-srcleads-ffmpeg-api..../host
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const deepseek = DEEPSEEK_API_KEY
+  ? new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey: DEEPSEEK_API_KEY })
+  : null;
 const WHISPER_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB (limite da API Whisper)
 const WHISPER_LOCAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // mesmo limite para Whisper local
 
@@ -101,24 +106,102 @@ function secondsToSrtTimestamp(seconds) {
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)},${pad(ms, 3)}`;
 }
 
-function localWhisperOutputToSrt(output) {
+// Erros comuns do Whisper em pt-BR → correção (aplicado com \b para palavra inteira)
+const PT_BR_CORRECTIONS = [
+  ['laser', 'lazer'],
+  ['forto', 'conforto'],
+  ['peruvib', 'Peruíbe'],
+  ['gourme', 'gourmet'],
+  ['estabuscando', 'Está buscando'],
+  ['falhe', 'fale'],
+  ['refugio', 'refúgio'],
+  ['condominío', 'condomínio'],
+  ['suites', 'suítes'],
+  ['apresentar este móvel', 'apresentar este imóvel'],
+  ['este móvel para', 'este imóvel para']
+];
+
+function applyPortugueseCorrections(text) {
+  if (!text || typeof text !== 'string') return text;
+  let out = text;
+  for (const [wrong, right] of PT_BR_CORRECTIONS) {
+    const re = new RegExp(`\\b${wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    out = out.replace(re, (m) => (m[0] === m[0].toUpperCase() ? right.charAt(0).toUpperCase() + right.slice(1) : right));
+  }
+  return out;
+}
+
+const DEEPSEEK_SYSTEM_PROMPT = 'Você corrige apenas erros de português do Brasil (ortografia, concordância, palavras transcritas errado). Mantenha o mesmo conteúdo e tom. Não adicione nem remova informações.';
+
+/** Corrige um texto único com DeepSeek. Retorna o texto corrigido ou o original em caso de erro. */
+async function correctTextWithDeepSeek(text) {
+  if (!deepseek || !text || typeof text !== 'string') return text;
+  try {
+    const completion = await deepseek.chat.completions.create({
+      model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+      messages: [
+        { role: 'system', content: DEEPSEEK_SYSTEM_PROMPT },
+        { role: 'user', content: `Corrija o texto abaixo e retorne somente o texto corrigido, sem explicação:\n\n${text}` }
+      ],
+      temperature: 0.2,
+      max_tokens: 4096
+    });
+    const corrected = completion?.choices?.[0]?.message?.content?.trim();
+    return corrected || text;
+  } catch (err) {
+    console.error('DeepSeek correctText:', err.message);
+    return text;
+  }
+}
+
+/** Corrige uma lista de segmentos (um por linha) com DeepSeek. Mantém a ordem; retorna array de textos. */
+async function correctChunksWithDeepSeek(chunkTexts) {
+  if (!deepseek || !Array.isArray(chunkTexts) || chunkTexts.length === 0) return chunkTexts;
+  const input = chunkTexts.map((t, i) => `${i + 1}. ${String(t).trim()}`).join('\n');
+  try {
+    const completion = await deepseek.chat.completions.create({
+      model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+      messages: [
+        { role: 'system', content: DEEPSEEK_SYSTEM_PROMPT + ' Mantenha exatamente a mesma quantidade de linhas. Retorne uma linha por segmento, no mesmo ordem, só o texto corrigido de cada linha, sem número nem prefixo.' },
+        { role: 'user', content: `Corrija o português de cada linha abaixo. Retorne apenas as linhas corrigidas, uma por linha:\n\n${input}` }
+      ],
+      temperature: 0.2,
+      max_tokens: 4096
+    });
+    const raw = completion?.choices?.[0]?.message?.content?.trim() || '';
+    const lines = raw.split(/\n/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+    if (lines.length !== chunkTexts.length) return chunkTexts;
+    return lines;
+  } catch (err) {
+    console.error('DeepSeek correctChunks:', err.message);
+    return chunkTexts;
+  }
+}
+
+function localWhisperOutputToSrt(output, options = {}) {
+  const { applyCorrections = true } = options;
   if (!output) return '';
 
   const chunks = Array.isArray(output.chunks) ? output.chunks : [];
   if (!chunks.length) {
     const text = typeof output.text === 'string' ? output.text.trim() : String(output);
     if (!text) return '';
-    return `1\n00:00:00,000 --> 00:00:10,000\n${text}\n`;
+    const finalText = applyCorrections ? applyPortugueseCorrections(text) : text;
+    return `1\n00:00:00,000 --> 00:00:10,000\n${finalText}\n`;
   }
+
+  const MAX_CHARS_PER_CUE = 55;
+  const MIN_CHARS_PREFER_PUNCTUATION = 40;
+  const PUNCTUATION_REGEX = /[,.;:–—]/;
 
   let index = 1;
   const lines = [];
-  const MAX_CHARS_PER_CUE = 55;
 
   for (const chunk of chunks) {
     if (!chunk || !chunk.text || !Array.isArray(chunk.timestamp)) continue;
     const [startRaw, endRaw] = chunk.timestamp;
-    const fullText = String(chunk.text || '').trim();
+    let fullText = String(chunk.text || '').trim();
+    if (applyCorrections) fullText = applyPortugueseCorrections(fullText);
     if (!fullText) continue;
 
     const start = typeof startRaw === 'number' ? startRaw : 0;
@@ -132,7 +215,6 @@ function localWhisperOutputToSrt(output) {
       continue;
     }
 
-    // Quebra texto longo em pedaços menores por palavras, mantendo tempo proporcional
     const words = fullText.split(/\s+/);
     const parts = [];
     let current = '';
@@ -140,8 +222,24 @@ function localWhisperOutputToSrt(output) {
     for (const w of words) {
       const candidate = current ? current + ' ' + w : w;
       if (candidate.length > MAX_CHARS_PER_CUE && current) {
-        parts.push(current);
-        current = w;
+        let pushed = false;
+        if (current.length >= MIN_CHARS_PREFER_PUNCTUATION) {
+          let lastPunctIdx = -1;
+          for (let i = 0; i < current.length; i++) {
+            if (PUNCTUATION_REGEX.test(current[i])) lastPunctIdx = i;
+          }
+          if (lastPunctIdx >= 0) {
+            const part1 = current.slice(0, lastPunctIdx + 1).trim();
+            const part2 = (current.slice(lastPunctIdx + 1).trim() + ' ' + w).trim();
+            if (part1) parts.push(part1);
+            current = part2;
+            pushed = true;
+          }
+        }
+        if (!pushed) {
+          parts.push(current);
+          current = w;
+        }
       } else {
         current = candidate;
       }
@@ -599,8 +697,9 @@ app.get('/transcribe', (req, res) => {
 });
 
 app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
-  const { url: audioUrl, audioPath, audio: audioBase64, language, response_format } = req.body || {};
+  const { url: audioUrl, audioPath, audio: audioBase64, language, response_format, correctWithDeepSeek } = req.body || {};
   let tmpPath = null;
+  const useDeepSeek = Boolean(deepseek && correctWithDeepSeek);
 
   try {
     const maxSize = openai ? WHISPER_MAX_FILE_SIZE : WHISPER_LOCAL_MAX_FILE_SIZE;
@@ -669,15 +768,27 @@ app.post('/transcribe', transcribeUpload.single('audio'), async (req, res) => {
       });
 
       if (response_format === 'srt') {
-        const srt = localWhisperOutputToSrt(output);
+        let toConvert = output;
+        if (useDeepSeek && Array.isArray(output.chunks) && output.chunks.length > 0) {
+          const texts = output.chunks.map((c) => String(c?.text ?? '').trim());
+          const correctedTexts = await correctChunksWithDeepSeek(texts);
+          toConvert = {
+            chunks: output.chunks.map((c, i) => ({
+              ...c,
+              text: correctedTexts[i] ?? c.text
+            }))
+          };
+        }
+        const srt = localWhisperOutputToSrt(toConvert, { applyCorrections: !useDeepSeek });
         if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         return res.send(srt || '');
       }
 
-      result = typeof output === 'string'
-        ? { text: output }
-        : (output && typeof output.text !== 'undefined' ? output : { text: String(output) });
+      let rawText = typeof output === 'string' ? output : (output && typeof output.text !== 'undefined' ? output.text : String(output));
+      if (useDeepSeek) rawText = await correctTextWithDeepSeek(rawText);
+      else rawText = applyPortugueseCorrections(rawText);
+      result = { text: rawText };
     }
     if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
 

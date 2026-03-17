@@ -43,6 +43,8 @@ API em Node.js + FFmpeg para:
 | `DATA_ROOT` | /data/render | Raiz dos caminhos de arquivos |
 | `OPENAI_API_KEY` | — | Opcional. Se definida, usa a API OpenAI para transcrição. Se não definida, usa Whisper local (Transformers.js), sem custo nem API key. |
 | `WHISPER_LOCAL_MODEL` | Xenova/whisper-tiny | Modelo Hugging Face para Whisper local (ex.: Xenova/whisper-small para mais precisão). |
+| `DEEPSEEK_API_KEY` | — | Opcional. Se definida e o body enviar `correctWithDeepSeek: true`, o texto transcrito é enviado à API DeepSeek para correção de português antes de montar o SRT ou retornar o texto. |
+| `DEEPSEEK_MODEL` | deepseek-chat | Modelo DeepSeek (ex.: deepseek-chat, deepseek-reasoner). |
 
 Todos os caminhos enviados nos endpoints são relativos a `DATA_ROOT` (ou seja, a `/data/render`). O n8n pode criar pastas dinamicamente (ex.: por job ou por data); a API cria os diretórios pai do arquivo de saída automaticamente (`mkdir -p`), então basta enviar o `outputPath` (ou `folderPath`) desejado.
 
@@ -186,6 +188,7 @@ Transcreve áudio com Whisper. Funciona de duas formas (sem quebrar nada):
 - `audio` — string em base64 ou data URL (opção B).
 - `language` — opcional; código ISO (ex.: `pt`, `en`). No Whisper local o padrão é `portuguese` (transcrição em português do Brasil).
 - `response_format` — opcional; `text` (padrão), `json`, `srt`, `verbose_json`, `vtt`.
+- `correctWithDeepSeek` — opcional; se `true` e `DEEPSEEK_API_KEY` estiver definida, o texto (ou cada segmento do SRT) é enviado à DeepSeek para correção de português antes de retornar.
 
 **Resposta (exemplo com response_format text):** `{ "text": "transcrição aqui..." }`
 
@@ -193,6 +196,7 @@ Se `response_format` for **`srt`**:
 
 - Com **`OPENAI_API_KEY`** → usa o formato SRT da própria API da OpenAI.
 - Sem `OPENAI_API_KEY` (Whisper local) → o servidor monta um SRT a partir dos timestamps dos trechos reconhecidos.
+- Com **`correctWithDeepSeek: true`** e **`DEEPSEEK_API_KEY`** → após a transcrição, cada segmento é corrigido pela DeepSeek e o SRT é devolvido com o texto corrigido (timestamps mantidos).
 
 ---
 
